@@ -80,15 +80,6 @@
     font-family:var(--mono); padding:4px 7px; border-radius:2px; font-size:13px;
   }
   .resize-row input[type=number]:disabled{ opacity:.4; }
-  .fmt-row{ display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
-  .fmt-row > label{ font-size:13px; color:var(--muted); flex:none; }
-  .fmt-row select,.fmt-row input[type=number]{
-    background:var(--panel2); border:1px solid var(--line); color:var(--ink);
-    font-family:var(--mono); padding:4px 7px; border-radius:2px; font-size:13px;
-  }
-  .fmt-row select{ flex:1; min-width:0; }
-  .fmt-row input[type=number]{ width:86px; }
-  .btn.mini{ padding:4px 9px; font-size:11.5px; }
   .hint{ font-size:11.5px; color:var(--faint); margin:8px 0 0; line-height:1.5; }
 
   .groups{ display:grid; grid-template-columns:1fr; gap:0; }
@@ -250,20 +241,6 @@
       </div>
 
       <div class="export-wrap">
-        <div class="fmt-row">
-          <label for="schemVer">形式</label>
-          <select id="schemVer">
-            <option value="3" selected>Sponge v3（新しいマイクラ向け）</option>
-            <option value="2">Sponge v2（1.21.4 以前向け）</option>
-          </select>
-        </div>
-        <div class="fmt-row">
-          <label for="dataVer">DataVersion</label>
-          <input type="number" id="dataVer" value="4189" min="0" max="999999">
-          <button class="btn mini" type="button" id="pickSchem">保存済みの .schem から読む</button>
-          <input type="file" id="refSchem" accept=".schem,.schematic" hidden>
-        </div>
-        <p class="hint">読み込めないと言われたら、まず形式を切り替えてみてください。それでも駄目なら、自分のマイクラで <code>//schem save test</code> と打って出来たファイルを「保存済みの .schem から読む」に入れると、その版の DataVersion と形式に合わせられます。</p>
         <div class="btn-row">
           <button class="btn" id="exportPng" disabled>PNGで保存</button>
           <button class="btn" id="exportSchem" disabled>.schem で保存</button>
@@ -310,14 +287,8 @@
           <h3>重い・巨大すぎるとき</h3>
           <p>「長辺を縮小」で 128px 前後に。500×500 を超えると25万ブロックになり、マイクラ内でもかなり重くなります。</p>
           <h3>//schem load でエラー・読み込めない</h3>
-          <p>マイクラのバージョン違いです。上の「形式」と「DataVersion」で合わせられます。</p>
-          <ol>
-            <li>まず形式を <code>Sponge v3</code> にして書き出し直す。新しい版の WorldEdit はこちらが標準です</li>
-            <li>それでも駄目なら、自分のマイクラで <code>//pos1</code> <code>//pos2</code> で適当な範囲を選び <code>//copy</code> → <code>//schem save test</code></li>
-            <li>出来た <code>test.schem</code> を「保存済みの .schem から読む」に入れる。その版の DataVersion と形式が自動で入ります</li>
-            <li>そのまま書き出し直す</li>
-          </ol>
-          <p>DataVersion はマイクラの版を表す番号で、版が上がるたびに変わります。初期値の 4189 は 1.21.4 のものです。</p>
+          <p>書き出すファイルは <strong>Sponge Schematic v3 / DataVersion 5023（マイクラ 26.3）</strong> に合わせてあります。これより古い版のマイクラや WorldEdit では読めないことがあります。</p>
+          <p>WorldEdit 本体が古いときも読めません。使っているマイクラの版に合う WorldEdit を入れ直してみてください。</p>
         </div>
       </details>
 
@@ -537,7 +508,11 @@ class NBT{
 }
 function varint(n){ const o=[]; while(true){ let b=n&0x7f; n>>>=7; if(n){o.push(b|0x80);} else {o.push(b);break;} } return o; }
 
-/* パレットと番号の並びは v2 / v3 で同じ。先に作っておく */
+/* 書き出す先の版。マイクラ 26.3 に合わせてある。
+   版が上がって読めなくなったら、この 2 つを直せばよい */
+const SCHEM_VERSION = 3;              /* Sponge Schematic v3 */
+const SCHEM_DATA_VERSION = 5023;      /* Minecraft 26.3 */
+
 function packBlocks(w,h,grid,vertical){
   let sw,sh,sl;
   if(vertical){ sw=w; sh=h; sl=1; } else { sw=w; sh=1; sl=h; }
@@ -550,88 +525,31 @@ function packBlocks(w,h,grid,vertical){
   }
   return { sw,sh,sl,pmap,data };
 }
-function palInto(nbt,pmap){
-  nbt.cStart('Palette');
-  [...pmap.entries()].sort((a,b)=>a[1]-b[1]).forEach(([id,idx])=>nbt.int(id,idx));
-  nbt.cEnd();
-}
 
-/* Sponge Schematic v2（古い形式）。ルートの名前が "Schematic" */
-function buildRawSchemV2(w,h,grid,vertical,dataVersion){
-  const {sw,sh,sl,pmap,data}=packBlocks(w,h,grid,vertical);
-  const nbt=new NBT();
-  nbt.cStart('Schematic');
-  nbt.int('Version',2);
-  nbt.int('DataVersion',dataVersion);
-  nbt.cStart('Metadata'); nbt.string('Name','DotArt'); nbt.cEnd();
-  nbt.short('Width',sw); nbt.short('Height',sh); nbt.short('Length',sl);
-  nbt.intArray('Offset',[0,0,0]);
-  nbt.int('PaletteMax',pmap.size);
-  palInto(nbt,pmap);
-  nbt.byteArray('BlockData',data);
-  nbt.cEnd();
-  return nbt.bytes();
-}
-
-/* Sponge Schematic v3（新しい形式）。v2 との違いは 3 つ。
+/* Sponge Schematic v3。古い v2 との違いは 3 つ。
    ・ルートが名前なしの Compound で、その中に "Schematic" が入る
    ・Palette と中身は "Blocks" の下へ移り、名前も BlockData から Data になる
    ・PaletteMax は廃止 */
-function buildRawSchemV3(w,h,grid,vertical,dataVersion){
+function buildRawSchem(w,h,grid,vertical){
   const {sw,sh,sl,pmap,data}=packBlocks(w,h,grid,vertical);
   const nbt=new NBT();
   nbt.cStart('');
   nbt.cStart('Schematic');
-  nbt.int('Version',3);
-  nbt.int('DataVersion',dataVersion);
+  nbt.int('Version',SCHEM_VERSION);
+  nbt.int('DataVersion',SCHEM_DATA_VERSION);
   nbt.cStart('Metadata'); nbt.string('Name','DotArt'); nbt.cEnd();
   nbt.short('Width',sw); nbt.short('Height',sh); nbt.short('Length',sl);
   nbt.intArray('Offset',[0,0,0]);
   nbt.cStart('Blocks');
-  palInto(nbt,pmap);
+  nbt.cStart('Palette');
+  [...pmap.entries()].sort((a,b)=>a[1]-b[1]).forEach(([id,idx])=>nbt.int(id,idx));
+  nbt.cEnd();
   nbt.byteArray('Data',data);
   nbt.emptyList('BlockEntities',10);
   nbt.cEnd();
   nbt.cEnd();
   nbt.cEnd();
   return nbt.bytes();
-}
-
-/* 保存済みの .schem から DataVersion と形式を拾う。
-   どの深さに居ても、その名前の Int を最初に見つけた物を採る */
-function findDataVersion(buf){
-  const dv=new DataView(buf.buffer,buf.byteOffset,buf.byteLength);
-  let p=0, found=null, sver=null;
-  const str=()=>{ const n=dv.getUint16(p); p+=2;
-    const s=new TextDecoder().decode(buf.subarray(p,p+n)); p+=n; return s; };
-  function payload(id,nm){
-    switch(id){
-      case 1: p+=1; break;
-      case 2: p+=2; break;
-      case 3: { const v=dv.getInt32(p); p+=4;
-                if(nm==='DataVersion'&&found===null) found=v;
-                if(nm==='Version'&&sver===null) sver=v; break; }
-      case 4: p+=8; break;
-      case 5: p+=4; break;
-      case 6: p+=8; break;
-      case 7: { const n=dv.getInt32(p); p+=4+n; break; }
-      case 8: { const n=dv.getUint16(p); p+=2+n; break; }
-      case 9: { const t=buf[p]; p+=1; const n=dv.getInt32(p); p+=4;
-                for(let i=0;i<n;i++) payload(t,''); break; }
-      case 10: { for(;;){ const t=buf[p]; p+=1; if(t===0) break;
-                  const n2=str(); payload(t,n2); } break; }
-      case 11: { const n=dv.getInt32(p); p+=4+n*4; break; }
-      case 12: { const n=dv.getInt32(p); p+=4+n*8; break; }
-      default: throw new Error('読めないタグ '+id);
-    }
-  }
-  const t=buf[p]; p+=1; const rootName=str(); payload(t,rootName);
-  return { dataVersion:found, version:sver, rootName };
-}
-async function gunzip(bytes){
-  const ds=new DecompressionStream('gzip');
-  const w=ds.writable.getWriter(); w.write(bytes); w.close();
-  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
 }
 async function gzip(bytes){
   const cs=new CompressionStream('gzip');
@@ -724,41 +642,12 @@ document.getElementById('exportSchem').addEventListener('click',async()=>{
   if(!state.grid){ return; }
   try{
     const vertical=document.querySelector('input[name=orient]:checked').value==='wall';
-    const ver=document.getElementById('schemVer').value==='2'?2:3;
-    const dver=parseInt(document.getElementById('dataVer').value,10);
-    if(!Number.isFinite(dver)||dver<0){ showMsg('DataVersion は数字で入れてください','err'); return; }
-    const build = ver===2 ? buildRawSchemV2 : buildRawSchemV3;
-    const raw=build(state.w,state.h,state.grid,vertical,dver);
+    const raw=buildRawSchem(state.w,state.h,state.grid,vertical);
     const gz=await gzip(raw);
     download(gz, state.baseName+'.schem', 'application/octet-stream');
-    showMsg(`.schem を保存しました（Sponge v${ver} / DataVersion ${dver} / ${(gz.length/1024).toFixed(1)} KB）・//schem load ${state.baseName} → //paste`,'ok');
+    showMsg(`.schem を保存しました（${(gz.length/1024).toFixed(1)} KB）・//schem load ${state.baseName} → //paste`,'ok');
   }catch(e){
     showMsg('.schem の書き出しに失敗: '+e.message,'err'); console.error(e);
-  }
-});
-
-/* 自分のマイクラで保存した .schem を読んで、形式と DataVersion を合わせる */
-document.getElementById('pickSchem').addEventListener('click',()=>{
-  document.getElementById('refSchem').click();
-});
-document.getElementById('refSchem').addEventListener('change',async(ev)=>{
-  const f=ev.target.files&&ev.target.files[0];
-  if(!f){ return; }
-  try{
-    let buf=new Uint8Array(await f.arrayBuffer());
-    if(buf[0]===0x1f && buf[1]===0x8b){ buf=await gunzip(buf); }
-    const r=findDataVersion(buf);
-    if(r.dataVersion===null){
-      showMsg('そのファイルからは DataVersion を見つけられませんでした','err'); return;
-    }
-    const guess = (r.version===2||r.version===3) ? r.version : (r.rootName==='' ? 3 : 2);
-    document.getElementById('dataVer').value=r.dataVersion;
-    document.getElementById('schemVer').value=String(guess);
-    showMsg(`合わせました・DataVersion ${r.dataVersion} / そのファイルは Sponge v${guess} 形式`,'ok');
-  }catch(e){
-    showMsg('読み取りに失敗: '+e.message,'err'); console.error(e);
-  }finally{
-    ev.target.value='';
   }
 });
 </script>
